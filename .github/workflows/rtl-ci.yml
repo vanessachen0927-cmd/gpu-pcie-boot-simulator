@@ -1,0 +1,62 @@
+name: RTL Hardware and Co-Simulation
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  rtl-verification:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Verilator
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y verilator build-essential
+          verilator --version
+
+      - name: Prepare Verilator build directories
+        run: mkdir -p build/rtl_sim build/rtl_regs build/cosim
+
+      - name: Build boot FSM test
+        run: |
+          verilator --binary --timing --assert -Wall -Wno-BLKSEQ \
+            --top-module tb_gpu_boot_fsm \
+            --Mdir build/rtl_sim \
+            rtl/gpu_boot_fsm.sv \
+            tb/tb_gpu_boot_fsm.sv
+
+      - name: Test boot FSM
+        run: ./build/rtl_sim/Vtb_gpu_boot_fsm
+
+      - name: Build register interface test
+        run: |
+          verilator --binary --timing --assert -Wall -Wno-BLKSEQ \
+            -Wno-UNUSEDSIGNAL \
+            --top-module tb_gpu_boot_regs \
+            --Mdir build/rtl_regs \
+            rtl/gpu_boot_fsm.sv \
+            rtl/gpu_boot_regs.sv \
+            tb/tb_gpu_boot_regs.sv
+
+      - name: Test register interface
+        run: ./build/rtl_regs/Vtb_gpu_boot_regs
+
+      - name: Build PCIe to RTL co-simulation
+        run: |
+          verilator --cc --exe --build -Wall \
+            -Wno-UNUSEDSIGNAL \
+            --top-module gpu_boot_regs \
+            --Mdir build/cosim \
+            -CFLAGS "-std=c++17 -I$(pwd)/src" \
+            rtl/gpu_boot_fsm.sv \
+            rtl/gpu_boot_regs.sv \
+            tests/rtl_host_driver.cpp \
+            src/pcie.cpp
+
+      - name: Test PCIe to RTL co-simulation
+        run: ./build/cosim/Vgpu_boot_regs

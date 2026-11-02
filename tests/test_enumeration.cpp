@@ -4,7 +4,7 @@
 #include <iostream>
 
 int main() {
-    lab::RootComplex root;
+    lab::PcieFabric root;
 
     root.attach({0, 1, 0}, lab::ConfigSpace(0x10DE, 0x2684));
     root.attach({0, 2, 0}, lab::ConfigSpace(0x8086, 0x1234));

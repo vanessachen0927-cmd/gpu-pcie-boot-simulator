@@ -27,3 +27,11 @@ add_test(NAME bar_model_tests COMMAND bar_model_tests)
 add_executable(capability_tests tests/test_capabilities.cpp)
 target_link_libraries(capability_tests PRIVATE pcie_core)
 add_test(NAME capability_tests COMMAND capability_tests)
+
+add_executable(architecture_tests tests/test_architecture.cpp)
+target_link_libraries(architecture_tests PRIVATE pcie_core)
+add_test(NAME architecture_tests COMMAND architecture_tests)
+
+add_executable(integrated_boot_tests tests/test_integrated_boot.cpp)
+target_link_libraries(integrated_boot_tests PRIVATE pcie_core)
+add_test(NAME integrated_boot_tests COMMAND integrated_boot_tests)

@@ -26,10 +26,20 @@ struct DiscoveredDevice {
     uint16_t device_id;
 };
 
-class RootComplex {
+class PcieFabric {
 public:
     void attach(BDF address, const ConfigSpace& config) {
         devices_.insert_or_assign(address, config);
+    }
+
+    ConfigSpace* find(BDF address) {
+        auto it = devices_.find(address);
+        return it == devices_.end() ? nullptr : &it->second;
+    }
+
+    const ConfigSpace* find(BDF address) const {
+        auto it = devices_.find(address);
+        return it == devices_.end() ? nullptr : &it->second;
     }
 
     std::vector<DiscoveredDevice> enumerate() const {
