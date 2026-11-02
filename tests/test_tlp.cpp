@@ -89,7 +89,7 @@ int main() {
     assert(stats.successful == 5);
     assert(stats.rejected == 4);
     assert(stats.timeouts == 1);
-    assert(stats.payload_bytes == 8);
+    assert(stats.payload_bytes == 12);
     assert(stats.total_cycles == 5 * 2 + 3 * 7 + 32);
     assert(std::abs(stats.average_latency_cycles() -
                     (static_cast<double>(stats.total_cycles) / stats.requests)) < 0.00001);
