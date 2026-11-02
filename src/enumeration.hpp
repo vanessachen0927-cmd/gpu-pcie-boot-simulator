@@ -26,7 +26,7 @@ struct DiscoveredDevice {
     uint16_t device_id;
 };
 
-class RootComplex {
+class PcieFabric {
 public:
     void attach(BDF address, const ConfigSpace& config) {
         devices_.insert_or_assign(address, config);
