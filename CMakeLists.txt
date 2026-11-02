@@ -35,3 +35,7 @@ add_test(NAME architecture_tests COMMAND architecture_tests)
 add_executable(integrated_boot_tests tests/test_integrated_boot.cpp)
 target_link_libraries(integrated_boot_tests PRIVATE pcie_core)
 add_test(NAME integrated_boot_tests COMMAND integrated_boot_tests)
+
+add_executable(tlp_tests tests/test_tlp.cpp)
+target_link_libraries(tlp_tests PRIVATE pcie_core)
+add_test(NAME tlp_tests COMMAND tlp_tests)
