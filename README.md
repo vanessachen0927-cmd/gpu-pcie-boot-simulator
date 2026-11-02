@@ -1,48 +1,75 @@
-# GPU PCIe Boot & Architecture Validation Lab
+# GPU PCIe Boot Hardware/Software Co-Simulation
 
-An educational, specification-inspired C++17 model of GPU endpoint initialization, PCIe link status, firmware-verification *result*, and MMIO BAR allocation. **Not an NVIDIA GPU implementation or real PCIe enumeration stack.**
+[![C++ Build and Validation](https://github.com/vanessachen0927-cmd/gpu-pcie-boot-simulator/actions/workflows/ci.yml/badge.svg)](https://github.com/vanessachen0927-cmd/gpu-pcie-boot-simulator/actions/workflows/ci.yml)
+[![RTL Hardware and Co-Simulation](https://github.com/vanessachen0927-cmd/gpu-pcie-boot-simulator/actions/workflows/rtl-ci.yml/badge.svg)](https://github.com/vanessachen0927-cmd/gpu-pcie-boot-simulator/actions/workflows/rtl-ci.yml)
 
-## Build
+An educational **C++17 + SystemVerilog** lab modeling PCIe GPU discovery, BAR probing and assignment, register-controlled boot, and transaction-level diagnostics. The design includes a synthesizable RTL boot FSM driven through Verilator by a C++ host.
+
+**Not NVIDIA firmware, a hardware PCIe endpoint, or a PCIe specification-conformant implementation.** No real PCIe traffic or GPU hardware is required.
+
+## Architecture
+
+```text
+C++ Host / Root Complex
+    |-- BDF discovery and 4 KiB configuration-space model
+    |-- 32-bit/64-bit memory BAR sizing and MMIO allocation
+    |-- v2: single-DWORD transaction model with requester ID / tag
+    |       + synthetic latency and completion fault injection
+    v
+BAR0 address decoding / simulated device register bus
+    v
+SystemVerilog register interface (BOOT_CONTROL, BOOT_STATUS,
+ERROR_CODE, FW_STATUS)
+    v
+SystemVerilog boot FSM: IDLE -> FW_LOAD -> FW_VERIFY -> READY/ERROR
+```
+
+## Quick start
+
+Dependencies: C++17 compiler, CMake, Python 3, and (for RTL tests) Verilator.
+
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 python3 tools/validate.py build/gpu_boot
 ./build/gpu_boot
-./build/gpu_boot --link-down
 ```
 
-## Current scope
-- Boot state model: RESET → FIRMWARE_VERIFIED → ENUMERATED → RESOURCES_ASSIGNED → READY, or FAILED.
-- Atomic MMIO allocation with power-of-two BAR sizing and aperture checks.
-- Five directed C++ tests and three Python CLI scenarios.
-- GitHub Actions CI.
+### Hardware/software co-simulation
 
-## Important model limitations
-- `firmware_valid` is a **simulated verification result**, not cryptographic signature verification.
-- BAR sizes are provided as inputs; this version does **not** implement real PCIe configuration transactions, BAR sizing probes, BDF scanning, PCIe capability linked lists, link training, or real device hardware.
-- `elapsed_us` is simulator runtime, **not PCIe link or boot hardware latency**.
-- The sample vendor/device IDs are illustrative and do not imply support for a real GPU.
+```bash
+mkdir -p build/cosim
+verilator --cc --exe --build -Wall -Wno-UNUSEDSIGNAL \
+  --top-module gpu_boot_regs --Mdir build/cosim \
+  -CFLAGS "-std=c++17 -I$(pwd)/src" \
+  rtl/gpu_boot_fsm.sv rtl/gpu_boot_regs.sv \
+  tests/rtl_host_driver.cpp src/pcie.cpp
+./build/cosim/Vgpu_boot_regs
+```
 
-## Next engineering milestones
-1. Define a 4-KiB Type-0 configuration-space abstraction and register read/write semantics.
-2. Implement BDF enumeration and absent-device detection via vendor ID `0xffff`.
-3. Implement 32-bit/64-bit BAR sizing and resource allocation with rollback.
-4. Model standard PCIe capability linked-list traversal and malformed-pointer tests.
-5. Add trace events, reproducible benchmark harness, and documented fault matrix.
-6. Optional: QEMU/Linux PCIe observation and secure-boot signature verification as separate integrations.
+The C++ driver configures the simulated endpoint and issues TLP-style configuration and BAR0 MMIO requests to the Verilator RTL model, including timeout and out-of-range diagnostics.
 
-## Design questions for interviews
-- Why must BAR allocations be aligned and nonoverlapping?
-- What happens if a BAR allocation fails halfway through enumeration?
-- How do config-space accesses differ from device MMIO?
-- Which parts of boot and PCIe enumeration are firmware-owned vs OS-owned?
+## Tested capabilities
 
+- BDF device discovery, PCIe capability linked-list traversal, Command register access.
+- 32-bit/64-bit BAR sizing-mask probing, alignment and MMIO resource allocation.
+- Simulated firmware-validity checks, boot FSM timeout and hardware reset recovery.
+- C++ directed tests, SystemVerilog testbenches, cross-language co-simulation.
+- **v2:** Config Read/Write, Memory Read/Write (one DWORD), completion status/tag, synthetic cycle counters, model fault injection.
+- Reproducible C++ and RTL GitHub Actions workflows.
 
-## Hardware / Software Co-Simulation
+## Documentation
 
-This project combines C++17 PCIe enumeration, BAR probing, MMIO allocation, synthesizable SystemVerilog boot-control RTL, and Verilator-based hardware/software co-simulation.
+- [Hardware architecture and register map](docs/HARDWARE_ARCHITECTURE.md)
+- [PCIe TLP model, performance assumptions, and limitations](docs/TLP_PERFORMANCE.md)
 
-See [Hardware Architecture](docs/HARDWARE_ARCHITECTURE.md) for the register map, verification strategy, and limitations.
+## Technical limitations
 
-Run the end-to-end simulation using the commands in the Hardware Architecture documentation.
+- TLPs are **transaction-level objects**, not serialized PCIe packet bitstreams. No real PCIe PHY, LTSSM, flow-control credits, CRC, DMA or PCIe-compliant packet transport.
+- Memory Write completion behavior is simplified; a real PCIe Memory Write is posted.
+- Modeled latency values are synthetic cycle costs, **not hardware benchmarks or physical GPU boot latency**.
+- Firmware validity is externally injected, not cryptographically verified. No actual firmware images execute.
+- The separate capability model and simplified root-complex allocation flow do not claim full PCIe platform compatibility.
+
+This project demonstrates hardware/software architecture, verification, and tradeoff reasoning—not compatibility with actual NVIDIA GPUs.
