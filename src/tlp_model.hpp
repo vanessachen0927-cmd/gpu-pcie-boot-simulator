@@ -7,6 +7,7 @@
 #include <functional>
 #include <optional>
 #include <stdexcept>
+#include <utility>
 
 namespace lab {
 
@@ -48,7 +49,7 @@ struct TlpStatistics {
     uint64_t payload_bytes = 0;
 
     double average_latency_cycles() const {
-        return completed ? static_cast<double>(total_cycles) / requests : 0.0;
+        return requests ? static_cast<double>(total_cycles) / requests : 0.0;
     }
 };
 
