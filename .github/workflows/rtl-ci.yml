@@ -19,9 +19,12 @@ jobs:
           sudo apt-get install -y verilator build-essential
           verilator --version
 
+      - name: Prepare Verilator build directories
+        run: mkdir -p build/rtl_sim build/rtl_regs build/cosim
+
       - name: Build boot FSM test
         run: |
-          verilator --binary --timing --assert -Wall \
+          verilator --binary --timing --assert -Wall -Wno-BLKSEQ \
             --top-module tb_gpu_boot_fsm \
             --Mdir build/rtl_sim \
             rtl/gpu_boot_fsm.sv \
@@ -32,7 +35,7 @@ jobs:
 
       - name: Build register interface test
         run: |
-          verilator --binary --timing --assert -Wall \
+          verilator --binary --timing --assert -Wall -Wno-BLKSEQ \
             -Wno-UNUSEDSIGNAL \
             --top-module tb_gpu_boot_regs \
             --Mdir build/rtl_regs \
