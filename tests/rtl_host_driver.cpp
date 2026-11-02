@@ -1,6 +1,7 @@
 #include "Vgpu_boot_regs.h"
 #include "verilated.h"
 #include "gpu_boot_controller.hpp"
+#include "tlp_model.hpp"
 
 #include <cstdint>
 #include <iostream>
@@ -169,7 +170,7 @@ int main(int argc, char** argv) {
 
         require(boot.success, "PCIe host initialization failed");
 
-        const auto* config = fabric.find({0, 1, 0});
+        auto* config = fabric.find({0, 1, 0});
         require(config != nullptr, "GPU config space missing");
         require(config->memory_enabled(), "MMIO decoding disabled");
         require(config->bus_master_enabled(), "Bus mastering disabled");
@@ -196,48 +197,71 @@ int main(int argc, char** argv) {
         const uint64_t mmio_base = endpoint.bars[0].address;
         const uint64_t mmio_size = endpoint.bars[0].size;
 
-        // Simplified host MMIO bridge: address decoding, not PCIe TLPs.
-        auto mmio_write = [&](uint64_t address, uint32_t value) {
-            require(
-                address >= mmio_base &&
-                address - mmio_base < mmio_size &&
-                (address - mmio_base) <= 0x0C &&
-                (address & 3u) == 0,
-                "Invalid GPU MMIO write"
-            );
-            gpu.write(static_cast<uint8_t>(address - mmio_base),
-                      value);
+        // v2.0 packet-level teaching model. C++ TLPs route through
+        // simulated BAR decoding to the Verilator-backed registers.
+        lab::TlpEndpoint tlp_device({0,1,0}, *config, mmio_base, mmio_size,
+            [&](uint32_t offset) { return gpu.read(static_cast<uint8_t>(offset)); },
+            [&](uint32_t offset, uint32_t value) {
+                gpu.write(static_cast<uint8_t>(offset), value);
+            });
+        lab::TlpLink link(tlp_device);
+        lab::TlpRequest request{
+            lab::TlpKind::ConfigRead0, {0,1,0}, 0x0100, 0x2a, 0x00
         };
 
-        auto mmio_read = [&](uint64_t address) -> uint32_t {
-            require(
-                address >= mmio_base &&
-                address - mmio_base < mmio_size &&
-                (address - mmio_base) <= 0x0C &&
-                (address & 3u) == 0,
-                "Invalid GPU MMIO read"
-            );
-            return gpu.read(
-                static_cast<uint8_t>(address - mmio_base)
-            );
-        };
+        const auto discovery = link.transact(request);
+        require(discovery.completion &&
+                discovery.completion->status == lab::CompletionStatus::Successful &&
+                discovery.completion->payload == 0x268410deu,
+                "TLP config read did not find GPU");
 
-        mmio_write(mmio_base + BOOT_CONTROL, 1);
+        request.kind = lab::TlpKind::MemoryWrite32;
+        request.address = mmio_base + BOOT_CONTROL;
+        request.payload = 1;
+        const auto started = link.transact(request);
+        require(started.completion &&
+                started.completion->status == lab::CompletionStatus::Successful,
+                "MMIO TLP boot-control write rejected");
 
         gpu.dut.fw_load_done = 1;
         gpu.dut.fw_valid = 1;
         gpu.tick();
         gpu.tick();
 
-        require(
-            (mmio_read(mmio_base + BOOT_STATUS) & 1u) != 0,
-            "PCIe MMIO-driven RTL boot did not reach READY"
-        );
+        request.kind = lab::TlpKind::MemoryRead32;
+        request.address = mmio_base + BOOT_STATUS;
+        const auto status_tlp = link.transact(request);
+        require(status_tlp.completion &&
+                status_tlp.completion->status == lab::CompletionStatus::Successful &&
+                (status_tlp.completion->payload & 1u) != 0,
+                "PCIe TLP-driven RTL boot did not reach READY");
 
-        require(
-            mmio_read(mmio_base + ERROR_CODE) == 0,
-            "PCIe MMIO-driven boot reported an error"
-        );
+        request.address = mmio_base + ERROR_CODE;
+        const auto error_tlp = link.transact(request);
+        require(error_tlp.completion && error_tlp.completion->payload == 0,
+                "PCIe TLP-driven boot reported an error");
+
+        // Exercise modeled completion loss and invalid MMIO aperture.
+        const auto timeout = link.transact(request, lab::TlpFault::DropCompletion);
+        require(!timeout.completion && timeout.latency_cycles == 32,
+                "Missing completion did not cause a model timeout");
+        request.address = mmio_base + mmio_size;
+        const auto unsupported = link.transact(request);
+        require(unsupported.completion &&
+                unsupported.completion->status == lab::CompletionStatus::UnsupportedRequest,
+                "Out-of-aperture TLP was accepted");
+
+        const auto& metrics = link.statistics();
+        require(metrics.requests == 6 && metrics.successful == 4 &&
+                metrics.rejected == 1 && metrics.timeouts == 1,
+                "Unexpected PCIe TLP diagnostic counters");
+        std::cout << "PASS: PCIe TLP config and MMIO transactions drive RTL\n";
+        std::cout << "TLP metrics: requests=" << metrics.requests
+                  << " successful=" << metrics.successful
+                  << " rejected=" << metrics.rejected
+                  << " timeouts=" << metrics.timeouts
+                  << " synthetic_cycles=" << metrics.total_cycles
+                  << " payload_bytes=" << metrics.payload_bytes << "\n";
 
         std::cout
             << "PASS: PCIe enumeration, BAR programming, MMIO-to-RTL boot\n";
