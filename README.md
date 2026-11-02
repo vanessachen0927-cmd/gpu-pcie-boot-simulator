@@ -37,3 +37,12 @@ python3 tools/validate.py build/gpu_boot
 - What happens if a BAR allocation fails halfway through enumeration?
 - How do config-space accesses differ from device MMIO?
 - Which parts of boot and PCIe enumeration are firmware-owned vs OS-owned?
+
+
+## Hardware / Software Co-Simulation
+
+This project combines C++17 PCIe enumeration, BAR probing, MMIO allocation, synthesizable SystemVerilog boot-control RTL, and Verilator-based hardware/software co-simulation.
+
+See [Hardware Architecture](docs/HARDWARE_ARCHITECTURE.md) for the register map, verification strategy, and limitations.
+
+Run the end-to-end simulation using the commands in the Hardware Architecture documentation.

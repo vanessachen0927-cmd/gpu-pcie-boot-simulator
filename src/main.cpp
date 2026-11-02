@@ -58,11 +58,13 @@ int main(int argc, char** argv) {
               << " message=\"" << result.message << "\""
               << " elapsed_us=" << elapsed_us << "\n";
 
+    unsigned bar_slot = 0;
     for (size_t i = 0; i < gpu.bars.size(); ++i) {
-        std::cout << "BAR" << i
+        std::cout << "BAR" << bar_slot
                   << " address=0x" << std::hex
                   << gpu.bars[i].address << std::dec
                   << " size=" << gpu.bars[i].size << "\n";
+        bar_slot += gpu.bars[i].is64 ? 2 : 1;
     }
 
     return result.success ? 0 : 2;

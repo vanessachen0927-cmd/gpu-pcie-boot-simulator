@@ -1,5 +1,6 @@
 #include "Vgpu_boot_regs.h"
 #include "verilated.h"
+#include "gpu_boot_controller.hpp"
 
 #include <cstdint>
 #include <iostream>
@@ -142,6 +143,104 @@ int main(int argc, char** argv) {
 
         std::cout
             << "PASS: C++ reset RTL hardware\n";
+
+        // End-to-end PCIe host to RTL device integration.
+        lab::Endpoint endpoint{
+            0x10DE, 0x2684, 0, 1, 0,
+            {{0x1000, 0, false}, {0x2000, 0, true}},
+            {0x01, 0x10}
+        };
+
+        lab::PcieFabric fabric;
+        fabric.attach(
+            {0, 1, 0},
+            lab::ConfigSpace(endpoint.vendor_id, endpoint.device_id)
+        );
+
+        lab::CapabilitySpace capabilities;
+        capabilities.set_head(0x40);
+        capabilities.add(0x40, 0x01, 0x50);
+        capabilities.add(0x50, 0x10, 0);
+
+        lab::RootComplex root;
+        lab::GpuBootController controller(fabric, root);
+
+        const auto boot = controller.boot(endpoint, capabilities);
+
+        require(boot.success, "PCIe host initialization failed");
+
+        const auto* config = fabric.find({0, 1, 0});
+        require(config != nullptr, "GPU config space missing");
+        require(config->memory_enabled(), "MMIO decoding disabled");
+        require(config->bus_master_enabled(), "Bus mastering disabled");
+
+        // BAR0 is 32-bit. BAR1/BAR2 are a 64-bit pair.
+        require(
+            (config->read_bar(0) & 0xFFFFFFF0u) ==
+                endpoint.bars[0].address,
+            "BAR0 configuration address mismatch"
+        );
+
+        const uint64_t bar1_address =
+            (static_cast<uint64_t>(config->read_bar(2)) << 32) |
+            (config->read_bar(1) & 0xFFFFFFF0u);
+
+        require(
+            bar1_address == endpoint.bars[1].address,
+            "64-bit BAR address mismatch"
+        );
+
+        // Reset RTL so the PCIe-discovered host can initiate boot.
+        gpu.reset();
+
+        const uint64_t mmio_base = endpoint.bars[0].address;
+        const uint64_t mmio_size = endpoint.bars[0].size;
+
+        // Simplified host MMIO bridge: address decoding, not PCIe TLPs.
+        auto mmio_write = [&](uint64_t address, uint32_t value) {
+            require(
+                address >= mmio_base &&
+                address - mmio_base < mmio_size &&
+                (address - mmio_base) <= 0x0C &&
+                (address & 3u) == 0,
+                "Invalid GPU MMIO write"
+            );
+            gpu.write(static_cast<uint8_t>(address - mmio_base),
+                      value);
+        };
+
+        auto mmio_read = [&](uint64_t address) -> uint32_t {
+            require(
+                address >= mmio_base &&
+                address - mmio_base < mmio_size &&
+                (address - mmio_base) <= 0x0C &&
+                (address & 3u) == 0,
+                "Invalid GPU MMIO read"
+            );
+            return gpu.read(
+                static_cast<uint8_t>(address - mmio_base)
+            );
+        };
+
+        mmio_write(mmio_base + BOOT_CONTROL, 1);
+
+        gpu.dut.fw_load_done = 1;
+        gpu.dut.fw_valid = 1;
+        gpu.tick();
+        gpu.tick();
+
+        require(
+            (mmio_read(mmio_base + BOOT_STATUS) & 1u) != 0,
+            "PCIe MMIO-driven RTL boot did not reach READY"
+        );
+
+        require(
+            mmio_read(mmio_base + ERROR_CODE) == 0,
+            "PCIe MMIO-driven boot reported an error"
+        );
+
+        std::cout
+            << "PASS: PCIe enumeration, BAR programming, MMIO-to-RTL boot\n";
 
         std::cout
             << "ALL C++ / RTL COSIMULATION TESTS PASSED\n";

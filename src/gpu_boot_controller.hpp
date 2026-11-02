@@ -3,6 +3,7 @@
 #include "pcie.hpp"
 #include "enumeration.hpp"
 #include "capabilities.hpp"
+#include "bar_probe.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -102,15 +103,70 @@ public:
 
         record("FIRMWARE", "Simulated firmware validation passed");
 
-        // Existing allocator validates BAR sizes, alignment,
-        // and available MMIO aperture.
+        // Model BAR requirements in PCIe configuration space, then
+        // discover them using standard all-ones sizing probes.
+        std::vector<unsigned> bar_slots;
+        unsigned slot = 0;
+
+        try {
+            for (const auto& bar : gpu.bars) {
+                if (slot >= 6 || (bar.is64 && slot == 5))
+                    return fail("GPU BAR layout exceeds six slots");
+
+                config->configure_bar(slot, bar.size, bar.is64);
+                bar_slots.push_back(slot);
+                slot += bar.is64 ? 2 : 1;
+            }
+
+            // Memory decoding must be disabled while probing BARs.
+            config->write_command(
+                static_cast<uint16_t>(config->read16(0x04) & ~0x0002u)
+            );
+
+            for (size_t i = 0; i < gpu.bars.size(); ++i) {
+                const auto probed = probe_memory_bar(*config, bar_slots[i]);
+                gpu.bars[i].size = probed.size;
+                gpu.bars[i].is64 = probed.is64;
+            }
+        } catch (const std::exception& error) {
+            return fail(std::string("BAR probing failed: ") + error.what());
+        }
+
+        record("BAR_PROBE", "Memory BAR sizes discovered via config space");
+
+        // Keep RootComplex as the single authoritative MMIO allocator.
         const BootReport allocation = root_.initialize(gpu);
 
         if (!allocation.success)
             return fail(allocation.message);
 
+        // Program the assigned addresses into the BAR registers.
+        try {
+            for (size_t i = 0; i < gpu.bars.size(); ++i) {
+                const auto& bar = gpu.bars[i];
+                const unsigned index = bar_slots[i];
+
+                if (!bar.is64 && bar.address > 0xFFFFFFFFULL)
+                    return fail("32-bit BAR address exceeds 4 GiB");
+
+                config->write_bar(
+                    index,
+                    static_cast<uint32_t>(bar.address)
+                );
+
+                if (bar.is64) {
+                    config->write_bar(
+                        index + 1,
+                        static_cast<uint32_t>(bar.address >> 32)
+                    );
+                }
+            }
+        } catch (const std::exception& error) {
+            return fail(std::string("BAR programming failed: ") + error.what());
+        }
+
         report.assigned_bytes = allocation.assigned_bytes;
-        record("MMIO", "BAR resources allocated");
+        record("MMIO", "Probed BAR resources allocated and programmed");
 
         // Enable simulated Memory Space and Bus Master bits.
         config->write_command(
